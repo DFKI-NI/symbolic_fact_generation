@@ -44,7 +44,7 @@ facts:
     module: 'symbolic_fact_generation.on_fact_generator',
     class: 'OnGenerator',
     params: [
-              ['relay', 'screwdriver', 'multimeter', 'power_drill_with_grip', 'klt'],
+              ['relay', 'screwdriver', 'multimeter', 'power_drill_with_grip', 'klt', 'hot_glue_gun'],
               ['klt'],
               '/pick_pose_selector_node/pose_selector_class_query',
               '/mobipick/pick_object_node/planning_scene_boxes'
