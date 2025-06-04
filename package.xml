@@ -22,5 +22,6 @@
   <exec_depend>gazebo_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>pose_selector</exec_depend>
+  <exec_depend>semap_lite</exec_depend>
 
 </package>
