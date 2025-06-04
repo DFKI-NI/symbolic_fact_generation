@@ -146,8 +146,6 @@ class SemapGenerator(GeneratorInterface):
             self._obj_margin = object_margin
             self._scene_graph = SceneGraph(base_frame='map', default_margin=self._obj_margin)
 
-            print(self._planning_scene_object_poses)
-
             mesh_path = rospkg.RosPack().get_path('pbr_objects') + "/meshes/"
             self._obj_meshes = {}
             for obj in self._objects_of_interest:
@@ -285,9 +283,9 @@ class SemapGenerator(GeneratorInterface):
         semap_facts = self.generate_semap_facts(names)
 
         # visualize scene
-        viewer = SceneViewer()
-        viewer.add_scene_graph(self._scene_graph)
-        viewer.show()
+        # viewer = SceneViewer()
+        # viewer.add_scene_graph(self._scene_graph)
+        # viewer.show()
 
         facts = []
 
@@ -350,8 +348,8 @@ class SemapGenerator(GeneratorInterface):
         semap_facts = self.generate_semap_facts(names)
 
         # visualize scene
-        viewer = SceneViewer()
-        viewer.add_scene_graph(self._scene_graph)
-        viewer.show()
+        # viewer = SceneViewer()
+        # viewer.add_scene_graph(self._scene_graph)
+        # viewer.show()
 
         return semap_facts
