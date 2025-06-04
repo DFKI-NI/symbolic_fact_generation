@@ -47,8 +47,8 @@ from symbolic_fact_generation.common.lib import split_object_class_from_id
 from rospy_message_converter import message_converter
 from object_pose_msgs.msg import ObjectPose
 
-from semap_lite import SceneGraph, Entity
-from semap_lite.intersections import spatial_intersection_multi, classify_intersection, IntersectionType
+from semap_lite import SceneStructureManager
+from semap_lite.intersection.classification import IntersectionType
 from semap_lite.viewer import SceneViewer
 import trimesh
 
@@ -144,7 +144,7 @@ class SemapGenerator(GeneratorInterface):
                     
             # Create semap scene graph
             self._obj_margin = object_margin
-            self._scene_graph = SceneGraph(base_frame='map', default_margin=self._obj_margin)
+            self._scene_graph = SceneStructureManager(margin=self._obj_margin)
 
             mesh_path = rospkg.RosPack().get_path('pbr_objects') + "/meshes/"
             self._obj_meshes = {}
@@ -161,7 +161,7 @@ class SemapGenerator(GeneratorInterface):
             sys.exit(1)
 
     
-    def create_entity(self, obj_pose: ObjectPose) -> Entity:
+    def create_entity(self, obj_pose: ObjectPose) -> trimesh.Trimesh:
         """
         Creates a Semap entity from an ObjectPose message.
 
@@ -177,7 +177,7 @@ class SemapGenerator(GeneratorInterface):
         box.update_faces(box.unique_faces())
         trimesh.repair.fix_winding(box)
 
-        return Entity(box, margin=self._obj_margin, copy=False)
+        return box
     
     def copy_and_transform_mesh(self, obj: ObjectPose) -> trimesh.Trimesh:
         """
@@ -201,9 +201,9 @@ class SemapGenerator(GeneratorInterface):
         Iterates over all ObjectPose messages in the planning scene and adds them to the scene graph.
         """
         for pose in self._planning_scene_object_poses:
-            self._scene_graph.add_node(pose.class_id + "_" + str(pose.instance_id), entity=self.create_entity(pose))
+            self._scene_graph.add_object(self.create_entity(pose), name=pose.class_id + "_" + str(pose.instance_id))
 
-    def generate_semap_facts(self, scene_graph: SceneGraph) -> List[Fact]:
+    def generate_semap_facts(self) -> List[Fact]:
         """
         Generates semantic facts from the given scene graph.
 
@@ -220,22 +220,23 @@ class SemapGenerator(GeneratorInterface):
             List[Fact]: List of semantic facts
         """
         semap_facts = []
-        for k, v, t in scene_graph.edges.data('type'):
+        for k, v, t in self._scene_graph.graph.edges(data=True):
             new_fact = None
 
             if "wall" in k or "wall" in v:
                 continue
-            if t == IntersectionType.Crosses:
+            intersection_type = t["classification"].type
+            if intersection_type == IntersectionType.Crosses:
                 new_fact = Fact(name="crosses", values=[k, v])
-            elif t == IntersectionType.Within:
+            elif intersection_type == IntersectionType.Within:
                 new_fact = Fact(name="within", values=[k, v])
-            elif t == IntersectionType.PartialWithin:
+            elif intersection_type == IntersectionType.PartialWithin:
                 new_fact = Fact(name="partial_within", values=[k, v])
-            elif t == IntersectionType.Contains:
+            elif intersection_type == IntersectionType.Contains:
                 new_fact = Fact(name="contains", values=[k, v])
-            elif t == IntersectionType.PartialContains:
+            elif intersection_type == IntersectionType.PartialContains:
                 new_fact = Fact(name="partial_contains", values=[k, v])
-            elif t == IntersectionType.Touches:
+            elif intersection_type == IntersectionType.Touches:
                 new_fact = Fact(name="touches", values=[k, v])
 
             # add new fact to list if not already there
@@ -271,16 +272,13 @@ class SemapGenerator(GeneratorInterface):
 
         # add all objects stored in the pose selector
         for obj in obj_poses:
-            obj_entity = self.copy_and_transform_mesh(obj)
+            obj_mesh = self.copy_and_transform_mesh(obj)
             obj_name = obj.class_id + "_" + str(obj.instance_id)
             
-            self._scene_graph.add_node(obj_name, entity=obj_entity)
+            self._scene_graph.add_object(obj_mesh, name=obj_name)
 
         # classify relations
-        mat = spatial_intersection_multi(self._scene_graph)
-
-        names = classify_intersection(mat)
-        semap_facts = self.generate_semap_facts(names)
+        semap_facts = self.generate_semap_facts()
 
         # visualize scene
         # viewer = SceneViewer()
@@ -339,13 +337,9 @@ class SemapGenerator(GeneratorInterface):
             obj_entity = self.create_entity(obj)
             obj_name = obj.class_id + "_" + str(obj.instance_id)
             
-            self._scene_graph.add_node(obj_name, entity=obj_entity)
+            self._scene_graph.add_object(obj_entity, name=obj_name)
 
-        # classify relations
-        mat = spatial_intersection_multi(self._scene_graph)
-
-        names = classify_intersection(mat)
-        semap_facts = self.generate_semap_facts(names)
+        semap_facts = self.generate_semap_facts()
 
         # visualize scene
         # viewer = SceneViewer()
