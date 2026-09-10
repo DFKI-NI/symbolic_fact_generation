@@ -41,7 +41,7 @@ import rospkg
 import rosgraph
 
 from copy import deepcopy
-from pose_selector.srv import ClassQuery, ClassQueryRequest
+from pose_selector.srv import ClassQuery, ClassQueryRequest, GetPoses
 from symbolic_fact_generation.common.collision_checking import oriented_collision_check_with_obj_size
 from symbolic_fact_generation.common.fact import Fact
 from symbolic_fact_generation.generator_interface import GeneratorInterface
@@ -52,9 +52,15 @@ from rospy_message_converter import message_converter
 
 class OnGenerator(GeneratorInterface):
 
-    def __init__(self, fact_name: str = 'on', objects_of_interest: List[str] = [], container_objects: List[str] = [],
-                 query_srv_str: str = '/pick_pose_selector_node/pose_selector_class_query',
-                 planning_scene_param: str = '/mobipick/pick_object_node/planning_scene_boxes') -> None:
+    def __init__(
+        self,
+        fact_name: str = "on",
+        objects_of_interest: List[str] = [],
+        container_objects: List[str] = [],
+        query_srv_str: str = "/pick_pose_selector_node/pose_selector_class_query",
+        planning_scene_param: str = "/mobipick/pick_object_node/planning_scene_boxes",
+        get_all_srv_str: str = None,
+    ) -> None:
         try:
             if not rosgraph.is_master_online():
                 print("Waiting for ROS master node to go online ...")
@@ -63,6 +69,10 @@ class OnGenerator(GeneratorInterface):
 
             rospy.wait_for_service(query_srv_str, timeout=10.0)
             self._pose_selector_query_srv = rospy.ServiceProxy(query_srv_str, ClassQuery)
+            self._pose_selector_get_all_srv = None
+            if get_all_srv_str:
+                rospy.wait_for_service(get_all_srv_str, timeout=10.0)
+                self._pose_selector_get_all_srv = rospy.ServiceProxy(get_all_srv_str, GetPoses)
 
             self._objects_of_interest = []
             for object_of_interest in objects_of_interest:
@@ -73,7 +83,7 @@ class OnGenerator(GeneratorInterface):
             self._container_objects = container_objects
             self._fact_name = fact_name
 
-            package_path = rospkg.RosPack().get_path('symbolic_fact_generation')
+            package_path = rospkg.RosPack().get_path("symbolic_fact_generation")
 
             self._planning_scene_object_poses = []
 
@@ -83,63 +93,59 @@ class OnGenerator(GeneratorInterface):
                 planning_scene_boxes = rospy.get_param(planning_scene_param)
                 id_counter = {}
                 for box in planning_scene_boxes:
-                    class_id, instance_id = split_object_class_from_id(box['scene_name'])
+                    class_id, instance_id = split_object_class_from_id(box["scene_name"])
                     if instance_id is None:
                         # create id for different class types starting from 1
                         id_counter[class_id] = id_counter.get(class_id, 1)
                         instance_id = id_counter[class_id]
                         id_counter[class_id] += 1
-                    pose = {'class_id': class_id,
-                            'instance_id': instance_id,
-                            'pose':
-                                {'position':
-                                    {
-                                        'x': box['box_position_x'],
-                                        'y': box['box_position_y'],
-                                        'z': box['box_position_z']
-                                    },
-                                 'orientation':
-                                    {
-                                        'x': box['box_orientation_x'],
-                                        'y': box['box_orientation_y'],
-                                        'z': box['box_orientation_z'],
-                                        'w': box['box_orientation_w']
-                                    }
-                                 },
-                            'size':
-                                {
-                                    'x': box['box_x_dimension'],
-                                    'y': box['box_y_dimension'],
-                                    'z': box['box_z_dimension']
-                                },
-                            'min':
-                                {
-                                    'x': -(box['box_x_dimension'] / 2.0),
-                                    'y': -(box['box_y_dimension'] / 2.0),
-                                    'z': -(box['box_z_dimension'] / 2.0)
-                                },
-                            'max':
-                                {
-                                    'x': (box['box_x_dimension'] / 2.0),
-                                    'y': (box['box_y_dimension'] / 2.0),
-                                    'z': (box['box_z_dimension'] / 2.0)
-                                }
-                            }
+                    pose = {
+                        "class_id": class_id,
+                        "instance_id": instance_id,
+                        "pose": {
+                            "position": {
+                                "x": box["box_position_x"],
+                                "y": box["box_position_y"],
+                                "z": box["box_position_z"],
+                            },
+                            "orientation": {
+                                "x": box["box_orientation_x"],
+                                "y": box["box_orientation_y"],
+                                "z": box["box_orientation_z"],
+                                "w": box["box_orientation_w"],
+                            },
+                        },
+                        "size": {"x": box["box_x_dimension"], "y": box["box_y_dimension"], "z": box["box_z_dimension"]},
+                        "min": {
+                            "x": -(box["box_x_dimension"] / 2.0),
+                            "y": -(box["box_y_dimension"] / 2.0),
+                            "z": -(box["box_z_dimension"] / 2.0),
+                        },
+                        "max": {
+                            "x": (box["box_x_dimension"] / 2.0),
+                            "y": (box["box_y_dimension"] / 2.0),
+                            "z": (box["box_z_dimension"] / 2.0),
+                        },
+                    }
                     self._planning_scene_object_poses.append(
-                        message_converter.convert_dictionary_to_ros_message('object_pose_msgs/ObjectPose', pose))
+                        message_converter.convert_dictionary_to_ros_message("object_pose_msgs/ObjectPose", pose)
+                    )
             else:
                 # use default config file
                 print("Using symbolic_fact_generation/config/tables_poses.yaml")
                 table_poses_yaml = package_path + "/config/table_poses.yaml"
-                yamlfile = open(table_poses_yaml, 'r')
+                yamlfile = open(table_poses_yaml, "r")
                 yaml_content = yaml.load(yamlfile, Loader=yaml.FullLoader)
 
                 for pose in yaml_content["poses"]:
                     self._planning_scene_object_poses.append(
-                        message_converter.convert_dictionary_to_ros_message('object_pose_msgs/ObjectPose', pose))
+                        message_converter.convert_dictionary_to_ros_message("object_pose_msgs/ObjectPose", pose)
+                    )
 
         except FileNotFoundError:
-            print("[WARNING] No planning scene parameter is set and table_poses.yaml file is not found! Only objects on other objects facts can be generated!")
+            print(
+                "[WARNING] No planning scene parameter is set and table_poses.yaml file is not found! Only objects on other objects facts can be generated!"
+            )
         except rospy.ROSInitException:
             print("ROS master was shutdown!")
             sys.exit(1)
@@ -148,17 +154,22 @@ class OnGenerator(GeneratorInterface):
             sys.exit(1)
 
     def generate_facts(self):
-        # query pose_selector for all object classes
-        obj_poses = []
-        for obj in self._objects_of_interest:
-            query_result = self._pose_selector_query_srv(ClassQueryRequest(class_id=obj))
-            obj_poses.extend(query_result.poses)
+        # Open-set mode queries the complete pose database, while omitting the
+        # get-all service preserves the original configured-class behaviour.
+        if self._pose_selector_get_all_srv is not None:
+            obj_poses = list(self._pose_selector_get_all_srv().poses.objects)
+        else:
+            obj_poses = []
+            for obj in self._objects_of_interest:
+                query_result = self._pose_selector_query_srv(ClassQueryRequest(class_id=obj))
+                obj_poses.extend(query_result.poses)
 
         on_facts = []
 
         # create new list with container objects
         container_objects = [
-            container_obj for container_obj in obj_poses if container_obj.class_id in self._container_objects]
+            container_obj for container_obj in obj_poses if container_obj.class_id in self._container_objects
+        ]
 
         # iterate over all container objects to create in facts
         for container_obj in container_objects:
@@ -184,7 +195,11 @@ class OnGenerator(GeneratorInterface):
                 # no need to check with itself
                 if surface_obj_name != obj_name:
                     # dont check objects which are in a container
-                    if obj_name not in [in_container.values[0] for in_container in on_facts if in_container.name == "in" and in_container.values[0] == obj_name]:
+                    if obj_name not in [
+                        in_container.values[0]
+                        for in_container in on_facts
+                        if in_container.name == "in" and in_container.values[0] == obj_name
+                    ]:
                         if check_on_condition(obj, surface_obj):
                             new_fact = Fact(name=self._fact_name, values=[obj_name, surface_obj_name])
 
@@ -198,11 +213,21 @@ class OnGenerator(GeneratorInterface):
 def check_in_condition(obj, container_obj) -> bool:
     if oriented_collision_check_with_obj_size(container_obj.pose, container_obj.size, obj.pose, obj.size):
         # calculate euclidean distance to check if obj is in container_obj
-        dist = numpy.linalg.norm((obj.pose.position.x - container_obj.pose.position.x,
-                                  obj.pose.position.y - container_obj.pose.position.y,
-                                  obj.pose.position.z - container_obj.pose.position.z))
-        radius = max(container_obj.max.x, container_obj.max.y, container_obj.max.z,
-                     container_obj.size.x / 2.0, container_obj.size.y / 2.0, container_obj.size.z / 2.0)
+        dist = numpy.linalg.norm(
+            (
+                obj.pose.position.x - container_obj.pose.position.x,
+                obj.pose.position.y - container_obj.pose.position.y,
+                obj.pose.position.z - container_obj.pose.position.z,
+            )
+        )
+        radius = max(
+            container_obj.max.x,
+            container_obj.max.y,
+            container_obj.max.z,
+            container_obj.size.x / 2.0,
+            container_obj.size.y / 2.0,
+            container_obj.size.z / 2.0,
+        )
         # remove 10% of radius for objects colliding with the outside wall
         # still detected as IN for rectangular container objects like klt if close to it
         radius = radius - radius * 0.1

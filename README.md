@@ -44,7 +44,7 @@ You can also import the fact generating class directly. For example only using t
     on_generator = OnGenerator(fact_name, objects_of_interest, container_objects, pose_selector_query_srv_str, planning_scene_param)
     current_facts = on_generator.generate_facts()
 
-Every Generator class has a ```generate_facts()``` function, which returns a list of ```Fact``` objects.
+Every Generator class has a ```generate_facts()``` function, which returns a list of ```Fact``` objects. `OnGenerator` can optionally use Pose Selector's get-all service so newly inserted open-set classes participate without being known in its static class list.
 
 ## Creating Custom Fact Generation
 
