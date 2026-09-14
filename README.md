@@ -46,6 +46,19 @@ You can also import the fact generating class directly. For example only using t
 
 Every Generator class has a ```generate_facts()``` function, which returns a list of ```Fact``` objects. `OnGenerator` can optionally use Pose Selector's get-all service so newly inserted open-set classes participate without being known in its static class list.
 
+`GripperHasObjectGenerator` monitors the configured gripper joint and emits the
+zero-argument `gripper_has_object()` fact when the gripper stops short of its
+fully closed position, excluding the fully open position. It is intended to be
+evaluated after a close command. An optional absolute effort threshold can
+confirm contact in addition to the position check. The MobiPick configuration
+requires `0.1 Nm`, which prevents a gripper resting at a partially open command
+from being mistaken for a grasp. Leave the threshold at zero when joint effort
+is unavailable.
+
+For MobiPick, the open tolerance includes both the real gripper's `0.0 rad`
+reading and the approximately `0.049 rad` joint position produced when the
+simulated calibrated controller is commanded to its `0.140 m` open gap.
+
 ## Creating Custom Fact Generation
 
 To create different facts, a fact generator class with a ```generate_facts()``` function is needed:

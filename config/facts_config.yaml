@@ -41,6 +41,24 @@ facts:
               0.01,
               'unknown']
   }
+  # A zero-argument predicate which is present when the gripper did not reach
+  # its fully closed joint position. Evaluate it after commanding a close.
+  # Set the effort threshold (the fifth parameter) above zero to additionally
+  # require joint effort; it is disabled by default because the real-hardware
+  # adapter reports 0.0. The final two parameters configure fully open.
+  - 'gripper_has_object': {
+    module: 'symbolic_fact_generation.gripper_facts_generator',
+    class: 'GripperHasObjectGenerator',
+    params: [
+              '/mobipick/joint_states',
+              'mobipick/gripper_finger_joint',
+              0.755,
+              0.01,
+              0.1,
+              0.0,
+              0.06
+            ]
+  }
   - 'on': {
     module: 'symbolic_fact_generation.on_fact_generator',
     class: 'OnGenerator',
