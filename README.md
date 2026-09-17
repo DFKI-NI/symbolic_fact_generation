@@ -53,7 +53,11 @@ evaluated after a close command. An optional absolute effort threshold can
 confirm contact in addition to the position check. The MobiPick configuration
 requires `0.1 Nm`, which prevents a gripper resting at a partially open command
 from being mistaken for a grasp. Leave the threshold at zero when joint effort
-is unavailable.
+is unavailable. An optional effort hold time keeps a confirming effort sample
+valid for that long: Gazebo reports an applied joint effort of exactly zero on
+physics steps in which the finger exceeds its URDF velocity limit, which
+happens continuously while a finger bounces on a grasped object, so without
+the hold (`0.5 s` for MobiPick) the fact flickers at the joint state rate.
 
 For MobiPick, the open tolerance includes both the real gripper's `0.0 rad`
 reading and the approximately `0.049 rad` joint position produced when the

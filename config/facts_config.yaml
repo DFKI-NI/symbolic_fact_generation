@@ -45,7 +45,11 @@ facts:
   # its fully closed joint position. Evaluate it after commanding a close.
   # Set the effort threshold (the fifth parameter) above zero to additionally
   # require joint effort; it is disabled by default because the real-hardware
-  # adapter reports 0.0. The final two parameters configure fully open.
+  # adapter reports 0.0. The next two parameters configure fully open. The
+  # last one holds a confirming effort sample for that many seconds: Gazebo
+  # reports zero effort on physics steps in which the finger exceeds its URDF
+  # velocity limit while bouncing on the object, which otherwise makes the
+  # fact flicker at the joint_states rate.
   - 'gripper_has_object': {
     module: 'symbolic_fact_generation.gripper_facts_generator',
     class: 'GripperHasObjectGenerator',
@@ -56,7 +60,8 @@ facts:
               0.01,
               0.1,
               0.0,
-              0.06
+              0.06,
+              0.5
             ]
   }
   - 'on': {

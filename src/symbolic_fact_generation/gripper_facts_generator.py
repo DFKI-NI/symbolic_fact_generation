@@ -30,6 +30,14 @@ class GripperHasObjectGenerator(GeneratorInterface):
     on its own: the absolute joint effort must also reach the threshold.  A
     value of zero disables effort confirmation, which is useful on hardware
     whose JointState publisher does not provide measured effort.
+
+    ``effort_hold_time`` keeps the effort confirmation alive for that many
+    seconds after the last sample that reached the threshold.  Gazebo reports
+    an applied joint force of exactly zero on every physics step in which the
+    joint exceeds its URDF velocity limit, so a finger bouncing on a grasped
+    object interleaves valid effort samples with zeros and the fact would
+    flicker without this peak hold.  The hold is measured on the JointState
+    header stamp (ROS time when the stamp is unset).
     """
 
     def __init__(self, fact_name: str = "gripper_has_object",
@@ -39,13 +47,16 @@ class GripperHasObjectGenerator(GeneratorInterface):
                  closed_tolerance: float = 0.01,
                  effort_threshold: float = 0.0,
                  open_joint_position: float = 0.0,
-                 open_tolerance: float = 0.06):
+                 open_tolerance: float = 0.06,
+                 effort_hold_time: float = 0.0):
         if closed_tolerance < 0.0:
             raise ValueError("closed_tolerance must be non-negative")
         if effort_threshold < 0.0:
             raise ValueError("effort_threshold must be non-negative")
         if open_tolerance < 0.0:
             raise ValueError("open_tolerance must be non-negative")
+        if effort_hold_time < 0.0:
+            raise ValueError("effort_hold_time must be non-negative")
 
         self._fact_name = fact_name
         self._joint_name = joint_name
@@ -54,6 +65,8 @@ class GripperHasObjectGenerator(GeneratorInterface):
         self._effort_threshold = effort_threshold
         self._open_joint_position = open_joint_position
         self._open_tolerance = open_tolerance
+        self._effort_hold_time = rospy.Duration(effort_hold_time)
+        self._last_effort_contact_time = None
         self._has_object = False
 
         self._joint_states_subscriber = rospy.Subscriber(
@@ -95,9 +108,36 @@ class GripperHasObjectGenerator(GeneratorInterface):
                     math.isfinite(effort)
                     and abs(effort) >= self._effort_threshold
                 )
+            effort_confirms_contact = self._hold_effort_contact(
+                msg, effort_confirms_contact
+            )
 
         self._has_object = (
             not_completely_open
             and not_completely_closed
             and effort_confirms_contact
         )
+
+    def _hold_effort_contact(self, msg: JointState, sample_confirms: bool) -> bool:
+        """Extend a confirming effort sample over the configured hold time."""
+        if self._effort_hold_time == rospy.Duration(0):
+            return sample_confirms
+
+        now = msg.header.stamp
+        if now == rospy.Time(0):
+            try:
+                now = rospy.get_rostime()
+            except rospy.ROSException:
+                return sample_confirms
+
+        if sample_confirms:
+            self._last_effort_contact_time = now
+            return True
+        if self._last_effort_contact_time is None:
+            return False
+        elapsed = now - self._last_effort_contact_time
+        if elapsed < rospy.Duration(0):
+            # Time jumped backwards (e.g. a simulation reset): forget the hold.
+            self._last_effort_contact_time = None
+            return False
+        return elapsed <= self._effort_hold_time
