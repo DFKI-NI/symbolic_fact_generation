@@ -191,8 +191,9 @@ class RobotAtGenerator(GeneratorInterface):
                 now = rospy.Time.now()
                 self._tf_listener.waitForTransform(self._global_frame, self._robot_frame, now, rospy.Duration(5.0))
                 trans, rot = self._tf_listener.lookupTransform(self._global_frame, self._robot_frame, now)
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                rospy.logwarn("Failed to get robot pose")
+            # tf.Exception is the base class: waitForTransform raises it directly on a late transform
+            except tf.Exception as e:
+                rospy.logwarn(f"Failed to get robot pose: {e}")
                 robot_at_facts.append(Fact(name=self._fact_name, values=[self._robot_at]))
                 return robot_at_facts
             for waypoint in self._waypoints:
