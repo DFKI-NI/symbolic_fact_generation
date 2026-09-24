@@ -49,7 +49,12 @@ facts:
   # last one holds a confirming effort sample for that many seconds: Gazebo
   # reports zero effort on physics steps in which the finger exceeds its URDF
   # velocity limit while bouncing on the object, which otherwise makes the
-  # fact flicker at the joint_states rate.
+  # fact flicker at the joint_states rate. The last two parameters give the
+  # real Robotiq's closed-on-air position (0.675 rad) and tolerance; they
+  # apply, with the effort check skipped, while the joint never reported a
+  # nonzero effort, which is the case on the real robot only. The last two
+  # parameters name the real Robotiq status topic, whose gOBJ object detection
+  # overrides the joint checks while it publishes (see GripperHasObjectGenerator).
   - 'gripper_has_object': {
     module: 'symbolic_fact_generation.gripper_facts_generator',
     class: 'GripperHasObjectGenerator',
@@ -61,7 +66,11 @@ facts:
               0.1,
               0.0,
               0.06,
-              0.5
+              0.5,
+              0.675,
+              0.03,
+              '/mobipick/gripper_hw/input',
+              2.0
             ]
   }
   - 'on': {

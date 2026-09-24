@@ -38,6 +38,22 @@ class GripperHasObjectGenerator(GeneratorInterface):
     object interleaves valid effort samples with zeros and the fact would
     flicker without this peak hold.  The hold is measured on the JointState
     header stamp (ROS time when the stamp is unset).
+
+    ``hardware_closed_joint_position`` (disabled when negative) handles real
+    hardware whose JointState publisher reports zero effort and whose fingers
+    close further than the simulated ones.  While the joint has never reported
+    a nonzero effort, the effort confirmation is skipped and this position,
+    with ``hardware_closed_tolerance``, counts as closed as well.  Gazebo
+    reports nonzero effort almost immediately and keeps the regular checks.
+
+    ``gripper_status_topic`` (disabled when empty) names the Robotiq driver's
+    register input topic.  While it delivers messages the gripper's own object
+    detection decides: gOBJ 1 or 2 (stopped on an object) means an object, 3
+    (reached the requested position) means none, and 0 (moving) keeps the
+    previous value.  The joint position cannot tell a partially opened empty
+    gripper from a held object without effort, which real hardware lacks.
+    Without status messages for ``gripper_status_timeout`` seconds, the joint
+    state checks apply again (the simulation has no such topic).
     """
 
     def __init__(self, fact_name: str = "gripper_has_object",
@@ -48,7 +64,11 @@ class GripperHasObjectGenerator(GeneratorInterface):
                  effort_threshold: float = 0.0,
                  open_joint_position: float = 0.0,
                  open_tolerance: float = 0.06,
-                 effort_hold_time: float = 0.0):
+                 effort_hold_time: float = 0.0,
+                 hardware_closed_joint_position: float = -1.0,
+                 hardware_closed_tolerance: float = 0.03,
+                 gripper_status_topic: str = "",
+                 gripper_status_timeout: float = 2.0):
         if closed_tolerance < 0.0:
             raise ValueError("closed_tolerance must be non-negative")
         if effort_threshold < 0.0:
@@ -57,6 +77,8 @@ class GripperHasObjectGenerator(GeneratorInterface):
             raise ValueError("open_tolerance must be non-negative")
         if effort_hold_time < 0.0:
             raise ValueError("effort_hold_time must be non-negative")
+        if hardware_closed_tolerance < 0.0:
+            raise ValueError("hardware_closed_tolerance must be non-negative")
 
         self._fact_name = fact_name
         self._joint_name = joint_name
@@ -67,7 +89,24 @@ class GripperHasObjectGenerator(GeneratorInterface):
         self._open_tolerance = open_tolerance
         self._effort_hold_time = rospy.Duration(effort_hold_time)
         self._last_effort_contact_time = None
+        self._hardware_closed_joint_position = hardware_closed_joint_position
+        self._hardware_closed_tolerance = hardware_closed_tolerance
+        self._effort_reported = False
         self._has_object = False
+        self._gripper_status_timeout = rospy.Duration(gripper_status_timeout)
+        self._gripper_status_time = None
+        self._gripper_status_has_object = False
+        self._gripper_status_subscriber = None
+        if gripper_status_topic:
+            try:
+                # Only needed on the real robot; the simulation may lack the package.
+                from robotiq_2f_gripper_control.msg import Robotiq2FGripper_robot_input
+            except ImportError as e:
+                rospy.logwarn(f"gripper_has_object: ignoring {gripper_status_topic}: {e}")
+            else:
+                self._gripper_status_subscriber = rospy.Subscriber(
+                    gripper_status_topic, Robotiq2FGripper_robot_input, self.gripper_status_cb
+                )
 
         self._joint_states_subscriber = rospy.Subscriber(
             joint_states_topic, JointState, self.joint_states_cb
@@ -75,9 +114,27 @@ class GripperHasObjectGenerator(GeneratorInterface):
 
     def generate_facts(self) -> List[Fact]:
         """Return the zero-argument predicate while an object is detected."""
-        if self._has_object:
+        if self._gripper_status_is_fresh():
+            has_object = self._gripper_status_has_object
+        else:
+            has_object = self._has_object
+        if has_object:
             return [Fact(name=self._fact_name, values=[])]
         return []
+
+    def gripper_status_cb(self, msg) -> None:
+        """Track the Robotiq driver's object detection (gOBJ)."""
+        self._gripper_status_time = rospy.get_rostime()
+        if msg.gOBJ in (1, 2):
+            self._gripper_status_has_object = True
+        elif msg.gOBJ == 3:
+            self._gripper_status_has_object = False
+
+    def _gripper_status_is_fresh(self) -> bool:
+        if self._gripper_status_time is None:
+            return False
+        age = rospy.get_rostime() - self._gripper_status_time
+        return rospy.Duration(0) <= age <= self._gripper_status_timeout
 
     def joint_states_cb(self, msg: JointState) -> None:
         """Update the detection state from this generator's configured joint."""
@@ -90,15 +147,31 @@ class GripperHasObjectGenerator(GeneratorInterface):
         if not math.isfinite(position):
             return
 
+        try:
+            effort_sample = msg.effort[joint_index]
+        except IndexError:
+            effort_sample = None
+        if effort_sample is not None and math.isfinite(effort_sample) and effort_sample != 0.0:
+            self._effort_reported = True
+        hardware = self._hardware_closed_joint_position >= 0.0 and not self._effort_reported
+
         not_completely_closed = (
             abs(position - self._closed_joint_position) > self._closed_tolerance
         )
+        if hardware:
+            # Keep the simulated closed position too: Gazebo counts as hardware
+            # until its first nonzero effort sample and must not report an
+            # object when it closes on air before that.
+            not_completely_closed = not_completely_closed and (
+                abs(position - self._hardware_closed_joint_position)
+                > self._hardware_closed_tolerance
+            )
         not_completely_open = (
             abs(position - self._open_joint_position) > self._open_tolerance
         )
         effort_confirms_contact = True
 
-        if self._effort_threshold > 0.0:
+        if self._effort_threshold > 0.0 and not hardware:
             try:
                 effort = msg.effort[joint_index]
             except IndexError:
