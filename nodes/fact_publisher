@@ -67,17 +67,30 @@ class FactPublisher():
                 rospy.logerr(f"Error while processing fact config file: {e}")
 
         self.current_facts = []
+        # last facts each generator produced, reused while it fails
+        self._last_generated = {}
 
     def update_and_publish_facts(self) -> None:
         generated_facts = []
         removed_facts = []
 
-        for generator in self._fact_classes:
+        for index, generator in enumerate(self._fact_classes):
             try:
-                generated_facts.extend(generator[1].generate_facts())
+                facts = list(generator[1].generate_facts())
             except AttributeError:
                 rospy.logwarn(
                     f"Specified generator class for fact {generator[0]} has no generate_facts() method! Could not generate {generator[0]} facts!")
+                continue
+            except Exception as e:
+                # One failing generator (e.g. the pose selector service is gone
+                # while the bringup restarts) must not kill the publisher: every
+                # other fact, such as gripper_has_object, would freeze at its last
+                # value. Keep this generator's last facts until it recovers.
+                facts = self._last_generated.get(index, [])
+                rospy.logwarn_throttle(
+                    10.0, f"Could not generate {generator[0]} facts, keeping its last {len(facts)}: {e}")
+            self._last_generated[index] = facts
+            generated_facts.extend(facts)
 
         for fact in list(self.current_facts):
             if fact in generated_facts:
