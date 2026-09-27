@@ -26,8 +26,8 @@ facts:
               '/mobipick/base_link',
               '',
               '/mobipick/tables_demo_planning',
-              0.2,
-              0.015,
+              0.1,  # at_threshold (m): an alignment shift of 11+ cm along the table no longer counts as at the waypoint
+              0.004,  # rot_threshold on |q_wp . q_robot|: 0.004 ~ 10 deg heading
               'unknown_pose'
             ]
   }
