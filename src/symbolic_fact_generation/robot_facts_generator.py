@@ -158,8 +158,12 @@ class RobotAtGenerator(GeneratorInterface):
                  waypoint_namespace: str = "/mobipick/tables_demo_planning",
                  at_threshold: float = 0.2,
                  rot_threshold: float = 0.015,
-                 undefined_pose_name: str = "undefined"):
+                 undefined_pose_name: str = "undefined",
+                 max_tf_age_s: float = 5.0):
         self._robot_at = undefined_pose_name
+        # the latest map -> base transform is used as long as it is at most this old; older (no TF from the robot,
+        # e.g. a network drop, #196) keeps the last robot_at and warns every tick with the age
+        self._max_tf_age_s = max_tf_age_s
 
         self._fact_name = fact_name
         self._global_frame = global_frame
@@ -187,13 +191,15 @@ class RobotAtGenerator(GeneratorInterface):
             robot_at = self._undefined_pose_name
 
             try:
-                self._tf_listener.waitForTransform(self._global_frame, self._robot_frame, rospy.Time(), rospy.Duration(5.0))
-                now = rospy.Time.now()
-                self._tf_listener.waitForTransform(self._global_frame, self._robot_frame, now, rospy.Duration(5.0))
-                trans, rot = self._tf_listener.lookupTransform(self._global_frame, self._robot_frame, now)
-            # tf.Exception is the base class: waitForTransform raises it directly on a late transform
+                trans, rot, age_s = self._robot_pose()
+            # tf.Exception is the base class of the lookup errors
             except tf.Exception as e:
                 rospy.logwarn(f"Failed to get robot pose: {e}")
+                robot_at_facts.append(Fact(name=self._fact_name, values=[self._robot_at]))
+                return robot_at_facts
+            if age_s > self._max_tf_age_s:
+                rospy.logwarn(f"Robot pose is {age_s:.0f} s old (no fresh {self._global_frame} -> {self._robot_frame} "
+                              f"transform from the robot: network drop?): robot_at stays {self._robot_at}")
                 robot_at_facts.append(Fact(name=self._fact_name, values=[self._robot_at]))
                 return robot_at_facts
             for waypoint in self._waypoints:
@@ -206,6 +212,20 @@ class RobotAtGenerator(GeneratorInterface):
             robot_at_facts.append(Fact(name=self._fact_name, values=[self._robot_at]))
 
         return robot_at_facts
+
+    def _robot_pose(self):
+        """(translation, rotation, age in s) of the latest global -> robot transform, whatever its age.
+
+        The old lookup waited up to 5 s for a transform at the current time and gave up on a lag of a few ms
+        ("extrapolation into the future", #196); the latest transform is good enough for a 10 cm threshold.
+        """
+        latest = self._tf_listener.getLatestCommonTime(self._global_frame, self._robot_frame)
+        trans, rot = self._tf_listener.lookupTransform(self._global_frame, self._robot_frame, latest)
+        return trans, rot, (self._now() - latest).to_sec()
+
+    @staticmethod
+    def _now() -> rospy.Time:
+        return rospy.Time.now()
 
     def load_waypoints(self, filepath: str) -> Dict[str, List[float]]:
         """Load poses from config file."""
