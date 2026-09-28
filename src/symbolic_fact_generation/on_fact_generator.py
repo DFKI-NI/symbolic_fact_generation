@@ -50,6 +50,24 @@ from symbolic_fact_generation.common.lib import split_object_class_from_id
 from rospy_message_converter import message_converter
 
 
+def wait_for_services(names, total_s, step_s=5.0, wait=None, log=print):
+    '''Wait for every service in names, retrying in step_s slices for up to total_s in all (a slow pose selector
+    after a restart used to kill the fact publisher after one 10 s wait, #61). Raises rospy.ROSException naming the
+    missing service when the time is up.'''
+    wait = wait or rospy.wait_for_service
+    deadline = time.monotonic() + max(0.0, float(total_s))
+    for name in names:
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                wait(name, timeout=max(0.1, min(step_s, remaining)))
+                break
+            except rospy.ROSException:
+                if deadline - time.monotonic() <= 0.0:
+                    raise rospy.ROSException(f"service {name} not available after {total_s:.0f} s")
+                log(f"still waiting for {name} ({deadline - time.monotonic():.0f} s left)")
+
+
 class OnGenerator(GeneratorInterface):
 
     def __init__(
@@ -68,11 +86,12 @@ class OnGenerator(GeneratorInterface):
                 while not rosgraph.is_master_online():
                     time.sleep(1.0)
 
-            rospy.wait_for_service(query_srv_str, timeout=10.0)
+            # the pose selector can take a while after a (re)start of the bringup: wait up to ~pose_selector_wait_s
+            wait_for_services([query_srv_str] + ([get_all_srv_str] if get_all_srv_str else []),
+                              rospy.get_param("~pose_selector_wait_s", 60.0))
             self._pose_selector_query_srv = rospy.ServiceProxy(query_srv_str, ClassQuery)
             self._pose_selector_get_all_srv = None
             if get_all_srv_str:
-                rospy.wait_for_service(get_all_srv_str, timeout=10.0)
                 self._pose_selector_get_all_srv = rospy.ServiceProxy(get_all_srv_str, GetPoses)
 
             self._objects_of_interest = []
@@ -158,9 +177,9 @@ class OnGenerator(GeneratorInterface):
         except rospy.ROSInitException:
             print("ROS master was shutdown!")
             sys.exit(1)
-        except rospy.ROSException:
-            print(f"Timeout while waiting for pose_selector service: {query_srv_str}!")
-            sys.exit(1)
+        except rospy.ROSException as e:
+            # raise instead of sys.exit: the fact publisher logs it and keeps publishing every other fact (#61)
+            raise RuntimeError(f"on facts disabled, pose selector not available: {e}") from e
 
     def generate_facts(self):
         # Open-set mode queries the complete pose database, while omitting the
