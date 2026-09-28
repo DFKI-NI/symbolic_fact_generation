@@ -60,6 +60,7 @@ class OnGenerator(GeneratorInterface):
         query_srv_str: str = "/pick_pose_selector_node/pose_selector_class_query",
         planning_scene_param: str = "/mobipick/pick_object_node/planning_scene_boxes",
         get_all_srv_str: str = None,
+        max_support_height: float = 1.5,
     ) -> None:
         try:
             if not rosgraph.is_master_online():
@@ -142,6 +143,14 @@ class OnGenerator(GeneratorInterface):
                         message_converter.convert_dictionary_to_ros_message("object_pose_msgs/ObjectPose", pose)
                     )
 
+            # only surfaces things can stand on: the planning scene also holds the lab ceiling ("roof") and walls,
+            # and an object with a wrong pose near them must not become on(klt_1, roof_1)
+            self._planning_scene_object_poses = [
+                surface
+                for surface in self._planning_scene_object_poses
+                if is_support_surface(surface, max_support_height)
+            ]
+
         except FileNotFoundError:
             print(
                 "[WARNING] No planning scene parameter is set and table_poses.yaml file is not found! Only objects on other objects facts can be generated!"
@@ -208,6 +217,11 @@ class OnGenerator(GeneratorInterface):
                     on_facts.append(new_fact)
 
         return on_facts
+
+
+def is_support_surface(surface_obj, max_support_height=1.5) -> bool:
+    """True when the top of the (upright) box surface_obj is at most max_support_height above the map floor"""
+    return surface_obj.pose.position.z + surface_obj.size.z / 2.0 <= max_support_height
 
 
 def check_in_condition(obj, container_obj) -> bool:

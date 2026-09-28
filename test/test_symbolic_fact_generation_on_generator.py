@@ -1,6 +1,6 @@
 import unittest
 
-from symbolic_fact_generation.on_fact_generator import check_on_condition, check_in_condition
+from symbolic_fact_generation.on_fact_generator import check_on_condition, check_in_condition, is_support_surface
 from geometry_msgs.msg import Pose, Vector3, Point, Quaternion
 
 
@@ -20,6 +20,17 @@ class TestOnGenerator(unittest.TestCase):
                 self.max = Vector3(size.x / 2.0, size.y / 2.0, size.z / 2.0)
             else:
                 self.max = max
+
+    def test_ceiling_is_no_support_surface(self):
+        # 2026-09-27: cic_tables_planning_scene.yaml has the lab ceiling as box 'roof'; klt_1 and relay_1 with wrong
+        # poses at ~2.4 m became on(klt_1, roof_1) and the planner tried to drive to the ceiling
+        roof = self.ObjectPose('roof', 1, Pose(position=Point(20.5, 14.96, 2.335), orientation=Quaternion(0, 0, 0, 1)),
+                               Vector3(5.4, 2.9, 0.1))
+        table = self.ObjectPose('table', 1, Pose(position=Point(21.265, 13.84, 0.3575),
+                                                 orientation=Quaternion(0, 0, 0, 1)), Vector3(1.6, 0.8, 0.715))
+        self.assertFalse(is_support_surface(roof))
+        self.assertTrue(is_support_surface(table))
+        self.assertFalse(is_support_surface(table, max_support_height=0.5))
 
     def test_klt_on_table(self):
         klt_pose = Pose(position=Point(21.123, 13.955, 0.802),
