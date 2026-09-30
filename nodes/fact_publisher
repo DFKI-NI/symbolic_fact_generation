@@ -34,7 +34,8 @@ import rospy
 
 from symbolic_fact_generation.msg import Facts as FactsMsg
 from symbolic_fact_generation.msg import ChangedFacts as ChangedFactsMsg
-from symbolic_fact_generation.common.lib import convert_facts_to_msg, convert_changed_facts_to_msg, read_yaml_file
+from symbolic_fact_generation.common.lib import convert_facts_to_msg, convert_changed_facts_to_msg, read_yaml_file, \
+    retarget_robot_names
 
 
 class FactPublisher():
@@ -48,6 +49,9 @@ class FactPublisher():
 
         facts_config_path = rospy.get_param("fact_config_path")
         facts_config = read_yaml_file(facts_config_path)
+        # #226: the config names robot 1 (/mobipick/..., /map); another robot's publisher retargets them
+        robot_namespace = rospy.get_param("robot_namespace", default="mobipick")
+        map_frame = rospy.get_param("map_frame", default="map")
 
         # create a list of classes with generate_facts function to generate the specified facts from the config file
         self._fact_classes = []
@@ -58,7 +62,7 @@ class FactPublisher():
                 # import fact generation module, class, params and
                 # save (fact name, instance object of fact generator class) in list
                 self._fact_classes.append((fact_config[0], getattr(__import__(fact_config[1]['module'], fromlist=[
-                                          fact_config[1]['class']]), fact_config[1]['class'])(fact_config[0], *fact_config[1]['params'])))
+                                          fact_config[1]['class']]), fact_config[1]['class'])(fact_config[0], *retarget_robot_names(fact_config[1]['params'], robot_namespace, map_frame))))
             except ImportError as e:
                 rospy.logwarn(f"Could not import module for {fact_config[0]} fact: {e}")
             except AttributeError as e:

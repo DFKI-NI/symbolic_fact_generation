@@ -3,10 +3,14 @@
     <arg name="fact_topic" default="/fact_publisher"/>
     <arg name="fact_config_path" default="$(find symbolic_fact_generation)/config/facts_config.yaml"/>
     <arg name="arm_postures_yaml" default="$(find symbolic_fact_generation)/config/arm_postures.yaml"/>
+    <arg name="robot_namespace" default="mobipick" doc="#226: robot whose facts this publisher makes (config names /mobipick/... are retargeted)"/>
+    <arg name="map_frame" default="map" doc="#226: that robot's map frame"/>
 
     <param name="fact_topic" type="str" value="$(arg fact_topic)"/>
     <param name="fact_config_path" type="str" value="$(arg fact_config_path)"/>
     <param name="arm_postures_yaml" type="str" value="$(arg arm_postures_yaml)"/>
+    <param name="robot_namespace" type="str" value="$(arg robot_namespace)"/>
+    <param name="map_frame" type="str" value="$(arg map_frame)"/>
 
     <node name="fact_publisher" pkg="symbolic_fact_generation" type="fact_publisher" respawn="false" output="screen"/>
 

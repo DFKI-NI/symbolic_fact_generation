@@ -70,6 +70,32 @@ def split_object_class_from_id(obj: str) -> Tuple[str, int]:
         return obj, None
 
 
+def retarget_robot_names(value, robot_namespace="mobipick", map_frame="map"):
+    """Point fact generator params written for robot 1 at another robot (#226, several Mobipicks in one sim).
+
+    In strings (also inside lists): /mobipick/... and mobipick/... get the robot's namespace, /map its map frame and
+    the global pose selectors (/pick_pose_selector_node/..., /place_pose_selector_node/...) move under its namespace.
+    Robot 1 (mobipick, map) is returned unchanged.
+    """
+    ns = str(robot_namespace or "mobipick").strip("/")
+    frame = str(map_frame or "map").strip("/")
+    if ns == "mobipick" and frame == "map":
+        return value
+    if isinstance(value, list):
+        return [retarget_robot_names(v, ns, frame) for v in value]
+    if not isinstance(value, str):
+        return value
+    if value in ("/map", "map"):
+        return ("/" if value.startswith("/") else "") + frame
+    if value == "/mobipick" or value.startswith("/mobipick/"):
+        return "/" + ns + value[len("/mobipick"):]
+    if value.startswith("mobipick/"):
+        return ns + value[len("mobipick"):]
+    if ns != "mobipick" and value.startswith(("/pick_pose_selector_node/", "/place_pose_selector_node/")):
+        return "/" + ns + value
+    return value
+
+
 def read_yaml_file(path):
     """Open and safely load a yaml file."""
     try:
