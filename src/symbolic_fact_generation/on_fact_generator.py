@@ -30,7 +30,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from typing import List
+from typing import List, Tuple, Sequence
 import yaml
 import time
 import numpy
@@ -48,6 +48,7 @@ from symbolic_fact_generation.generator_interface import GeneratorInterface
 from symbolic_fact_generation.common.lib import split_object_class_from_id
 
 from rospy_message_converter import message_converter
+from tf.transformations import quaternion_matrix
 
 
 def wait_for_services(names, total_s, step_s=5.0, wait=None, log=print):
@@ -181,6 +182,14 @@ class OnGenerator(GeneratorInterface):
             # raise instead of sys.exit: the fact publisher logs it and keeps publishing every other fact (#61)
             raise RuntimeError(f"on facts disabled, pose selector not available: {e}") from e
 
+        # Object-on-object "on" facts, off by default and read as *private* node
+        # parameters: only the fact_publisher's own generator enables them, so the
+        # planner's generator (tables_demo_planning/tables_demo_api.py) keeps the
+        # table-only behaviour even when a dataset run sets the parameters.
+        self._stacking_facts = bool(rospy.get_param("~stacking_facts", False))
+        self._stacking_margin_m = float(rospy.get_param("~stacking_margin_m", 0.05))
+        self._stacking_min_height_m = float(rospy.get_param("~stacking_min_height_m", 0.03))
+
     def generate_facts(self):
         # Open-set mode queries the complete pose database, while omitting the
         # get-all service preserves the original configured-class behaviour.
@@ -235,6 +244,25 @@ class OnGenerator(GeneratorInterface):
                 if new_fact is not None and new_fact not in on_facts:
                     on_facts.append(new_fact)
 
+        if self._stacking_facts:
+            planning_scene_names = {
+                surface.class_id + "_" + str(surface.instance_id)
+                for surface in self._planning_scene_object_poses
+            }
+            in_container_names = {
+                fact.values[0] for fact in on_facts if fact.name == "in"
+            }
+            on_facts.extend(
+                stacking_on_facts(
+                    obj_poses,
+                    exclude_surface_names=planning_scene_names,
+                    in_container_names=in_container_names,
+                    margin=self._stacking_margin_m,
+                    min_height_m=self._stacking_min_height_m,
+                    fact_name=self._fact_name,
+                )
+            )
+
         return on_facts
 
 
@@ -285,3 +313,107 @@ def check_on_condition(obj, surface_obj, z_threshold=0.1) -> bool:
     surface_size.z = z_threshold
 
     return oriented_collision_check_with_obj_size(surface_pose, surface_size, obj.pose, obj.size)
+
+
+def object_bounds(obj) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """``(min, max)`` corners of the axis-aligned box of an object in the reference frame.
+
+    The bounds of the message describe the box *in the object frame*, around the
+    pose origin (the ground-truth feeder adds the ``center_offset`` of the class
+    there), so they are rotated with the pose and the pose position goes on top.
+    Rotating matters: the ground-truth edges of a dataset are labelled from the
+    same rotated boxes (``gt_bounds`` in the recorded run), and an unrotated
+    multimeter or drill reaches 20 cm higher than it really does. A client that
+    sends no bounds at all - the pose_selector stores every message as it
+    arrives - falls back to the box of ``size`` around the origin, the
+    convention ``check_in_condition`` uses.
+    """
+
+    position = (obj.pose.position.x, obj.pose.position.y, obj.pose.position.z)
+    bounds = ((obj.min.x, obj.min.y, obj.min.z), (obj.max.x, obj.max.y, obj.max.z))
+    if not all(high > low for low, high in zip(*bounds)):
+        half = (obj.size.x / 2.0, obj.size.y / 2.0, obj.size.z / 2.0)
+        bounds = (tuple(-h for h in half), half)
+
+    rotation = quaternion_matrix(
+        (
+            obj.pose.orientation.x,
+            obj.pose.orientation.y,
+            obj.pose.orientation.z,
+            obj.pose.orientation.w,
+        )
+    )
+    low, high = bounds
+    centre = [sum(rotation[row][col] * (low[col] + high[col]) / 2.0 for col in range(3)) for row in range(3)]
+    half_extent = [sum(abs(rotation[row][col]) * (high[col] - low[col]) / 2.0 for col in range(3)) for row in range(3)]
+
+    return (
+        tuple(p + c - h for p, c, h in zip(position, centre, half_extent)),
+        tuple(p + c + h for p, c, h in zip(position, centre, half_extent)),
+    )
+
+
+def check_resting_on(obj, surface_obj, margin: float = 0.05) -> bool:
+    """Checks whether ``obj`` rests on top of ``surface_obj``.
+
+    The definition of the geometric ``on`` edge label, copied from ``resting_on``
+    in ssg_tools ``relations.py`` so that a fact and a label can never disagree -
+    a fact overrides the label in ``build_relationships``: both boxes grow by
+    ``margin`` and have to touch without separating on any axis, ``obj`` has to
+    be above ``surface_obj`` within ``margin``, and a pair that is above each
+    other (two boxes thinner than the margin at the same level) is no evidence
+    of resting and is dropped.
+    """
+
+    (obj_min, obj_max), (surface_min, surface_max) = object_bounds(obj), object_bounds(surface_obj)
+    obj_low = [low - margin for low in obj_min]
+    obj_high = [high + margin for high in obj_max]
+    surface_low = [low - margin for low in surface_min]
+    surface_high = [high + margin for high in surface_max]
+
+    touching = max(
+        max(o_low - s_high for o_low, s_high in zip(obj_low, surface_high)),
+        max(s_low - o_high for s_low, o_high in zip(surface_low, obj_high)),
+    ) <= 0.0
+    above = obj_min[2] >= surface_max[2] - margin
+    above_reverse = surface_min[2] >= obj_max[2] - margin
+
+    return touching and above and not above_reverse
+
+
+def stacking_on_facts(
+    obj_poses: Sequence,
+    exclude_surface_names: Sequence[str] = (),
+    in_container_names: Sequence[str] = (),
+    margin: float = 0.05,
+    min_height_m: float = 0.03,
+    fact_name: str = "on",
+) -> List[Fact]:
+    """``on`` facts for every pair of objects that rests on another object.
+
+    The pose database holds every object of the world, so a relay lying on a
+    multimeter is a pair like any other and gets the same predicate as
+    ``on(obj, table)``: the dataset labels the two identically, and a fact
+    overrides the geometric label (see ``build_relationships`` in ssg_tools
+    ``disc_run_adapter.py``). Surfaces that already have a fact of their own
+    (the planning-scene tables) and objects that are ``in`` a container keep the
+    fact they have, and an object too flat to stand on is never a surface.
+    """
+
+    facts = []
+    for surface_obj in obj_poses:
+        if surface_obj.size.z < min_height_m:
+            continue
+        surface_name = surface_obj.class_id + "_" + str(surface_obj.instance_id)
+        if surface_name in exclude_surface_names:
+            continue
+        for obj in obj_poses:
+            obj_name = obj.class_id + "_" + str(obj.instance_id)
+            if obj_name == surface_name or obj_name in in_container_names:
+                continue
+            if check_resting_on(obj, surface_obj, margin):
+                new_fact = Fact(name=fact_name, values=[obj_name, surface_name])
+                if new_fact not in facts:
+                    facts.append(new_fact)
+
+    return facts
