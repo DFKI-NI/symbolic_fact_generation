@@ -30,6 +30,27 @@ class TestWaitForServices(unittest.TestCase):
             wait_for_services(['/query'], total_s=0.05, step_s=0.01, wait=wait, log=lambda _: None)
         self.assertIn('/query', str(ctx.exception))
 
+    def test_a_shutdown_stops_the_wait_at_once(self):
+        # #61 follow-up: with rospy shut down, wait_for_service raises ROSInterruptException immediately; retrying
+        # logged "still waiting" in a tight loop and froze the GUI showing the tables demo
+        calls = []
+
+        def wait(name, timeout):
+            calls.append(name)
+            raise rospy.ROSInterruptException('rospy shutdown')
+
+        logged = []
+        with self.assertRaises(rospy.ROSInterruptException):
+            wait_for_services(['/query'], total_s=60.0, step_s=0.01, wait=wait, log=logged.append)
+        self.assertEqual(calls, ['/query'])
+        self.assertEqual(logged, [])
+
+    def test_a_wait_that_returns_at_once_is_paced_to_the_slice(self):
+        wait = FakeWait({'/query': 10 ** 6})
+        with self.assertRaises(rospy.ROSException):
+            wait_for_services(['/query'], total_s=0.2, step_s=0.05, wait=wait, log=lambda _: None)
+        self.assertLessEqual(len(wait.calls), 6)   # about total_s / step_s retries, not thousands
+
     def test_slices_never_exceed_the_step(self):
         wait = FakeWait({'/query': 2})
         wait_for_services(['/query'], total_s=60.0, step_s=5.0, wait=wait, log=lambda _: None)

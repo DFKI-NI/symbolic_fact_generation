@@ -60,13 +60,23 @@ def wait_for_services(names, total_s, step_s=5.0, wait=None, log=print):
     for name in names:
         while True:
             remaining = deadline - time.monotonic()
+            slice_s = max(0.1, min(step_s, remaining))
+            started = time.monotonic()
             try:
-                wait(name, timeout=max(0.1, min(step_s, remaining)))
+                wait(name, timeout=slice_s)
                 break
+            except rospy.ROSInterruptException:
+                # rospy is shutting down: rospy.wait_for_service returns at once from now on, so retrying would log
+                # "still waiting" in a tight loop (tens of thousands of lines per second froze the tables demo GUI)
+                raise
             except rospy.ROSException:
                 if deadline - time.monotonic() <= 0.0:
                     raise rospy.ROSException(f"service {name} not available after {total_s:.0f} s")
+                if rospy.is_shutdown():
+                    raise rospy.ROSInterruptException(f"rospy shut down while waiting for service {name}")
                 log(f"still waiting for {name} ({deadline - time.monotonic():.0f} s left)")
+                # a wait that gave up before its slice elapsed must not turn this loop into a busy loop
+                time.sleep(max(0.0, min(1.0, slice_s) - (time.monotonic() - started)))
 
 
 class OnGenerator(GeneratorInterface):
